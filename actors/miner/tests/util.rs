@@ -9,7 +9,8 @@ use fil_actor_market::{
 use fil_actor_miner::ext::market::ON_MINER_SECTORS_TERMINATE_METHOD;
 use fil_actor_miner::ext::power::{UPDATE_CLAIMED_POWER_METHOD, UPDATE_PLEDGE_TOTAL_METHOD};
 use fil_actor_miner::{
-    aggregate_pre_commit_network_fee, TerminateSectorsParams, TerminationDeclaration,
+    aggregate_pre_commit_network_fee, consensus_fault_penalty, get_miner_info,
+    reward_for_consensus_slash_report, MinerInfo, TerminateSectorsParams, TerminationDeclaration,
 };
 use fil_actor_miner::{
     initial_pledge_for_power, locked_reward_from_reward, new_deadline_info_from_offset_and_epoch,
@@ -20,9 +21,9 @@ use fil_actor_miner::{
     DisputeWindowedPoStParams, ExpirationQueue, ExpirationSet, FaultDeclaration,
     GetControlAddressesReturn, Method, MinerConstructorParams as ConstructorParams, Partition,
     PoStPartition, PowerPair, PreCommitSectorBatchParams, PreCommitSectorParams,
-    ProveCommitSectorParams, RecoveryDeclaration, SectorOnChainInfo, SectorPreCommitOnChainInfo,
-    Sectors, State, SubmitWindowedPoStParams, VestingFunds, WindowedPoSt,
-    CRON_EVENT_PROVING_DEADLINE,
+    ProveCommitSectorParams, RecoveryDeclaration, ReportConsensusFaultParams, SectorOnChainInfo,
+    SectorPreCommitOnChainInfo, Sectors, State, SubmitWindowedPoStParams, VestingFunds,
+    WindowedPoSt, CRON_EVENT_PROVING_DEADLINE,
 };
 use fil_actor_power::{
     CurrentTotalPowerReturn, EnrollCronEventParams, Method as PowerMethod, UpdateClaimedPowerParams,
@@ -35,6 +36,7 @@ use fil_actors_runtime::{
     STORAGE_MARKET_ACTOR_ADDR, STORAGE_POWER_ACTOR_ADDR,
 };
 use fvm_shared::bigint::Zero;
+use fvm_shared::consensus::ConsensusFault;
 
 use fvm_ipld_bitfield::{BitField, UnvalidatedBitField};
 use fvm_ipld_blockstore::Blockstore;
@@ -1668,6 +1670,74 @@ impl ActorHarness {
         rt.verify();
 
         (-sector_power, pledge_delta)
+    }
+
+    pub fn report_consensus_fault(
+        &self,
+        rt: &mut MockRuntime,
+        from: Address,
+        fault: Option<ConsensusFault>,
+    ) -> Result<(), ActorError> {
+        rt.expect_validate_caller_type((*CALLER_TYPES_SIGNABLE).clone());
+        rt.set_caller(*ACCOUNT_ACTOR_CODE_ID, from);
+        let params =
+            ReportConsensusFaultParams { header1: vec![], header2: vec![], header_extra: vec![] };
+
+        rt.expect_verify_consensus_fault(
+            params.header1.clone(),
+            params.header2.clone(),
+            params.header_extra.clone(),
+            fault,
+            ExitCode::OK,
+        );
+
+        let current_reward = ThisEpochRewardReturn {
+            this_epoch_baseline_power: self.baseline_power.clone(),
+            this_epoch_reward_smoothed: self.epoch_reward_smooth.clone(),
+        };
+        rt.expect_send(
+            *REWARD_ACTOR_ADDR,
+            RewardMethod::ThisEpochReward as u64,
+            RawBytes::default(),
+            TokenAmount::from(0u8),
+            RawBytes::serialize(current_reward).unwrap(),
+            ExitCode::OK,
+        );
+        let this_epoch_reward = self.epoch_reward_smooth.estimate();
+        let penalty_total = consensus_fault_penalty(this_epoch_reward.clone());
+        let reward_total = reward_for_consensus_slash_report(&this_epoch_reward);
+        rt.expect_send(
+            from,
+            METHOD_SEND,
+            RawBytes::default(),
+            reward_total.clone(),
+            RawBytes::default(),
+            ExitCode::OK,
+        );
+
+        // pay fault fee
+        let to_burn = &penalty_total - &reward_total;
+        rt.expect_send(
+            *BURNT_FUNDS_ACTOR_ADDR,
+            METHOD_SEND,
+            RawBytes::default(),
+            to_burn,
+            RawBytes::default(),
+            ExitCode::OK,
+        );
+
+        let result = rt.call::<Actor>(
+            Method::ReportConsensusFault as u64,
+            &RawBytes::serialize(params).unwrap(),
+        )?;
+        expect_empty(result);
+        rt.verify();
+        Ok(())
+    }
+
+    pub fn get_info(&self, rt: &MockRuntime) -> Result<MinerInfo, ActorError> {
+        let st = self.get_state(rt);
+        get_miner_info(&rt.store, &st)
     }
 
     pub fn change_peer_id(&self, rt: &mut MockRuntime, new_id: Vec<u8>) {
