@@ -146,7 +146,7 @@ pub struct Expectations {
     pub expect_verify_sigs: VecDeque<ExpectedVerifySig>,
     pub expect_verify_seal: Option<ExpectVerifySeal>,
     pub expect_verify_post: Option<ExpectVerifyPoSt>,
-    pub expect_compute_unsealed_sector_cid: Option<ExpectComputeUnsealedSectorCid>,
+    pub expect_compute_unsealed_sector_cid: VecDeque<ExpectComputeUnsealedSectorCid>,
     pub expect_verify_consensus_fault: Option<ExpectVerifyConsensusFault>,
     pub expect_get_randomness_tickets: Option<ExpectRandomness>,
     pub expect_get_randomness_beacon: Option<ExpectRandomness>,
@@ -204,8 +204,9 @@ impl Expectations {
             self.expect_verify_post
         );
         assert!(
-            self.expect_compute_unsealed_sector_cid.is_none(),
-            "expect_compute_unsealed_sector_cid not received",
+            self.expect_compute_unsealed_sector_cid.is_empty(),
+            "expect_compute_unsealed_sector_cid: {:?}, not received",
+            self.expect_compute_unsealed_sector_cid
         );
         assert!(
             self.expect_verify_consensus_fault.is_none(),
@@ -258,7 +259,7 @@ impl Default for MockRuntime {
             caller: Address::new_id(0),
             caller_type: Default::default(),
             value_received: Default::default(),
-            hash_func: Box::new(|_| [0u8; 32]),
+            hash_func: Box::new(blake2b_256),
             network_version: NetworkVersion::V0,
             state: Default::default(),
             balance: Default::default(),
@@ -404,6 +405,10 @@ impl MockRuntime {
         *self.balance.get_mut() = amount;
     }
 
+    pub fn get_balance(&mut self) -> TokenAmount {
+        self.balance.borrow().to_owned()
+    }
+
     pub fn add_balance(&mut self, amount: TokenAmount) {
         *self.balance.get_mut() += amount;
     }
@@ -427,6 +432,11 @@ impl MockRuntime {
             return Some(*address);
         }
         self.id_addresses.get(address).cloned()
+    }
+
+    pub fn add_id_address(&mut self, source: Address, target: Address) {
+        assert_eq!(target.protocol(), Protocol::ID, "target must use ID address protocol");
+        self.id_addresses.insert(source, target);
     }
 
     pub fn call<A: ActorCode>(
@@ -489,8 +499,15 @@ impl MockRuntime {
     }
 
     #[allow(dead_code)]
-    pub fn expect_compute_unsealed_sector_cid(&self, exp: ExpectComputeUnsealedSectorCid) {
-        self.expectations.borrow_mut().expect_compute_unsealed_sector_cid = Some(exp);
+    pub fn expect_compute_unsealed_sector_cid(
+        &self,
+        reg: RegisteredSealProof,
+        pieces: Vec<PieceInfo>,
+        cid: Cid,
+        exit_code: ExitCode,
+    ) {
+        let exp = ExpectComputeUnsealedSectorCid { reg, pieces, cid, exit_code };
+        self.expectations.borrow_mut().expect_compute_unsealed_sector_cid.push_back(exp);
     }
 
     #[allow(dead_code)]
@@ -842,7 +859,7 @@ impl Runtime<MemoryBlockstore> for MockRuntime {
         F: FnOnce(&mut C, &mut Self) -> Result<RT, ActorError>,
     {
         if self.in_transaction {
-            return Err(actor_error!(user_assertion_failed; "nested transaction"));
+            return Err(actor_error!(assertion_failed; "nested transaction"));
         }
         let mut read_only = self.state()?;
         self.in_transaction = true;
@@ -867,7 +884,7 @@ impl Runtime<MemoryBlockstore> for MockRuntime {
     ) -> Result<RawBytes, ActorError> {
         self.require_in_call();
         if self.in_transaction {
-            return Err(actor_error!(user_assertion_failed; "side-effect within transaction"));
+            return Err(actor_error!(assertion_failed; "side-effect within transaction"));
         }
 
         assert!(
@@ -926,7 +943,7 @@ impl Runtime<MemoryBlockstore> for MockRuntime {
     fn create_actor(&mut self, code_id: Cid, actor_id: ActorID) -> Result<(), ActorError> {
         self.require_in_call();
         if self.in_transaction {
-            return Err(actor_error!(user_assertion_failed; "side-effect within transaction"));
+            return Err(actor_error!(assertion_failed; "side-effect within transaction"));
         }
         let expect_create_actor = self
             .expectations
@@ -942,7 +959,7 @@ impl Runtime<MemoryBlockstore> for MockRuntime {
     fn delete_actor(&mut self, addr: &Address) -> Result<(), ActorError> {
         self.require_in_call();
         if self.in_transaction {
-            return Err(actor_error!(user_assertion_failed; "side-effect within transaction"));
+            return Err(actor_error!(assertion_failed; "side-effect within transaction"));
         }
         let exp_act = self.expectations.borrow_mut().expect_delete_actor.take();
         if exp_act.is_none() {
@@ -1027,7 +1044,7 @@ impl Primitives for MockRuntime {
     }
 
     fn hash_blake2b(&self, data: &[u8]) -> [u8; 32] {
-        blake2b_256(data)
+        (*self.hash_func)(data)
     }
     fn compute_unsealed_sector_cid(
         &self,
@@ -1038,7 +1055,7 @@ impl Primitives for MockRuntime {
             .expectations
             .borrow_mut()
             .expect_compute_unsealed_sector_cid
-            .take()
+            .pop_front()
             .expect("Unexpected syscall to ComputeUnsealedSectorCID");
 
         assert_eq!(exp.reg, reg, "Unexpected compute_unsealed_sector_cid : reg mismatch");
