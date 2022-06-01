@@ -83,7 +83,7 @@ fn report_consensus_fault_updates_consensus_fault_reported_field() {
     let test_addr = Address::new_actor("satoshi".as_bytes());
     let receiver = rt.receiver;
 
-    let start_info = h.get_info(&rt).unwrap();
+    let start_info = h.get_info(&rt);
     assert_eq!(-1, start_info.consensus_fault_elapsed);
 
     let report_epoch = 333;
@@ -99,7 +99,7 @@ fn report_consensus_fault_updates_consensus_fault_reported_field() {
         }),
     )
     .unwrap();
-    let end_info = h.get_info(&rt).unwrap();
+    let end_info = h.get_info(&rt);
     assert_eq!(
         report_epoch + rt.policy.consensus_fault_ineligibility_duration,
         end_info.consensus_fault_elapsed
@@ -115,7 +115,7 @@ fn double_report_of_consensus_fault_fails() {
     let test_addr = Address::new_actor("satoshi".as_bytes());
     let receiver = rt.receiver;
 
-    let start_info = h.get_info(&rt).unwrap();
+    let start_info = h.get_info(&rt);
     assert_eq!(-1, start_info.consensus_fault_elapsed);
 
     let report_epoch = 333;
@@ -132,7 +132,7 @@ fn double_report_of_consensus_fault_fails() {
         }),
     )
     .unwrap();
-    let end_info = h.get_info(&rt).unwrap();
+    let end_info = h.get_info(&rt);
     assert_eq!(
         report_epoch + rt.policy.consensus_fault_ineligibility_duration,
         end_info.consensus_fault_elapsed
@@ -185,7 +185,7 @@ fn double_report_of_consensus_fault_fails() {
         }),
     )
     .unwrap();
-    let end_info = h.get_info(&rt).unwrap();
+    let end_info = h.get_info(&rt);
     assert_eq!(
         rt.epoch + rt.policy.consensus_fault_ineligibility_duration,
         end_info.consensus_fault_elapsed
