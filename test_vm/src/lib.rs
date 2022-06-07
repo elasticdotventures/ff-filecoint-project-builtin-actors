@@ -71,6 +71,8 @@ pub struct MinerBalances {
 }
 
 pub const VERIFREG_ROOT_KEY: &[u8] = &[200; fvm_shared::address::BLS_PUB_LEN];
+pub const TEST_VERIFREG_ROOT_SIGNER_ADDR: Address = Address::new_id(FIRST_NON_SINGLETON_ADDR);
+pub const TEST_VERIFREG_ROOT_ADDR: Address = Address::new_id(FIRST_NON_SINGLETON_ADDR + 1);
 // Account actor seeding funds created by new_with_singletons
 pub const FAUCET_ROOT_KEY: &[u8] = &[153; fvm_shared::address::BLS_PUB_LEN];
 pub const TEST_FAUCET_ADDR: Address = Address::new_id(FIRST_NON_SINGLETON_ADDR + 2);
@@ -163,6 +165,7 @@ impl<'bs> VM<'bs> {
         .unwrap();
         let verifreg_root_signer =
             v.normalize_address(&Address::new_bls(VERIFREG_ROOT_KEY).unwrap()).unwrap();
+        assert_eq!(TEST_VERIFREG_ROOT_SIGNER_ADDR, verifreg_root_signer);
         // verifreg root msig
         let msig_ctor_params = serialize(
             &fil_actor_multisig::ConstructorParams {
@@ -190,6 +193,7 @@ impl<'bs> VM<'bs> {
             .deserialize()
             .unwrap();
         let root_msig_addr = msig_ctor_ret.id_address;
+        assert_eq!(TEST_VERIFREG_ROOT_ADDR, root_msig_addr);
         // verifreg
         let verifreg_head = v.put_store(&VerifRegState::new(&v.store, root_msig_addr).unwrap());
         v.set_actor(
@@ -401,6 +405,7 @@ impl MessageInfo for InvocationCtx<'_, '_> {
 }
 
 pub const TEST_VM_RAND_STRING: &str = "i_am_random_____i_am_random_____";
+pub const TEST_VM_INVALID_SIG: &str = "i_am_invalid";
 
 pub struct InvocationCtx<'invocation, 'bs> {
     v: &'invocation VM<'bs>,
@@ -781,10 +786,15 @@ impl<'invocation, 'bs> Runtime<MemoryBlockstore> for InvocationCtx<'invocation, 
 impl Primitives for VM<'_> {
     fn verify_signature(
         &self,
-        _signature: &Signature,
+        signature: &Signature,
         _signer: &Address,
         _plaintext: &[u8],
     ) -> Result<(), anyhow::Error> {
+        if String::from_utf8(signature.bytes.clone()).unwrap() == TEST_VM_INVALID_SIG {
+            return Err(anyhow::format_err!(
+                "verify signature syscall failing on TEST_VM_INVALID_SIG"
+            ));
+        }
         Ok(())
     }
 

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0, MIT
 
 use fvm_ipld_encoding::tuple::*;
+use fvm_ipld_encoding::Cbor;
 use fvm_shared::address::Address;
 use fvm_shared::bigint::bigint_ser;
 use fvm_shared::crypto::signature::Signature;
@@ -14,6 +15,8 @@ pub struct VerifierParams {
     #[serde(with = "bigint_ser")]
     pub allowance: DataCap,
 }
+
+impl Cbor for VerifierParams {}
 
 pub type AddVerifierParams = VerifierParams;
 pub type AddVerifierClientParams = VerifierParams;
