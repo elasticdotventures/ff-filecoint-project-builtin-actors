@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub fn check_state_invariants<BS: Blockstore>(
     policy: &Policy,
-    state: State,
+    state: &State,
     store: &BS,
     balance: &TokenAmount,
 ) -> (StateSummary, MessageAccumulator) {
